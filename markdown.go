@@ -126,17 +126,18 @@ func (p *MarkdownPublisher) initOptions(ctx context.Context, options ...interfac
 		}
 	}
 
+	const defaultContentPath = "content/post"
+	const defaultImagePathPrefix = "img"
 	if p.ContentFS == nil {
-		if p.ContentFS, err = p.BasePathConfigurator.ComposePath(ctx, "content/post"); err != nil {
+		if p.ContentFS, err = p.BasePathConfigurator.ComposePath(ctx, defaultContentPath); err != nil {
 			return err
 		}
 	}
-
 	if p.ImageCacheFS == nil {
-		if p.ImageCacheFS, err = p.BasePathConfigurator.ComposePath(ctx, "static/img/content"); err != nil {
+		if p.ImageCacheFS, err = p.BasePathConfigurator.ComposePath(ctx, fmt.Sprintf("static/%s/%s", defaultImagePathPrefix, defaultContentPath)); err != nil {
 			return err
 		}
-		p.ImageCacheRefURL = "/img/content"
+		p.ImageCacheRefURL = fmt.Sprintf("/%s/%s", defaultImagePathPrefix, defaultContentPath)
 	}
 
 	if p.Store == nil {
