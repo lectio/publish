@@ -185,11 +185,12 @@ func (p *MarkdownPublisher) publishItem(ctx context.Context, index uint, item *d
 		return uerr
 	}
 
-	slug := slugify.Slugify(link.GetSimplifiedHostnameWithoutTLD(finalURL) + "-" + item.Name)
+	cleanTitle := text.TransformText(ctx, item.Name, func(context.Context, string) {}, text.RemovePipedSuffixFromText)
+	slug := slugify.Slugify(link.GetSimplifiedHostnameWithoutTLD(finalURL) + "-" + cleanTitle)
 	fm := p.PropertiesFactory.EmptyMutable(ctx)
 
 	fm.Add(ctx, "archetype", item.ContentArchetype)
-	fm.Add(ctx, "title", text.TransformText(ctx, item.Name, func(context.Context, string) {}, text.RemovePipedSuffixFromText))
+	fm.Add(ctx, "title", cleanTitle)
 	fm.Add(ctx, "description", item.Description)
 	fm.Add(ctx, "slug", slug)
 	fm.AddParsed(ctx, "date", item.UpdatedAt)
