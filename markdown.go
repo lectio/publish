@@ -195,8 +195,8 @@ func (p *MarkdownPublisher) publishItem(ctx context.Context, index uint, item *d
 	fm.Add(ctx, "slug", slug)
 	fm.AddParsed(ctx, "date", item.UpdatedAt)
 	fm.Add(ctx, "link", finalURL.String())
-	fm.Add(ctx, "untraversedLink", item.Link)
 	fm.Add(ctx, "linkBrand", link.GetSimplifiedHostname(finalURL))
+	fm.Add(ctx, "linkOriginal", item.Link)
 	fm.AddProperty(ctx, NewDropmarkTagsProperty("categories", item.Tags))
 	fm.AddProperty(ctx, NewDownloadedResourceProperty("featuredImage", item.ThumbnailURL, p.ImageCacheRefURL, p.ImageCacheFS, slug))
 
