@@ -94,14 +94,18 @@ func NewDownloadedResourceProperty(name properties.PropertyName, featuredImageUR
 
 // Copy copies the key/value pair into the given map
 func (p *downloadedResourceProperty) Copy(ctx context.Context, m map[string]interface{}, options ...interface{}) {
-	m[string(p.name)] = p.localHREF
-
 	if writeCtx, ok := ctx.Value(InWriteContent).(WriteContentContextValue); ok {
 		// we pass in ourselves into PageFromURL because we implement resource.FileAttachmentCreator, which will
 		// cause PageFromURL to use CreateFile and AutoAssignExtension
-		writeCtx.publisher.ResourceFactory.PageFromURL(ctx, p.downloadURL.String(), p)
+		_, err := writeCtx.publisher.ResourceFactory.PageFromURL(ctx, p.downloadURL.String(), p)
+		if err != nil {
+			m[string(p.name)+"_error_url"] = p.downloadURL.String()
+			m[string(p.name)+"_error"] = err.Error()
+			return
+		}
+		m[string(p.name)] = p.localHREF
 	} else {
-		m[string(p.name)+"_error"] = "Expected WriteContentContextValue, proper writeCtx was not passed into lectio/publish.downloadedResourceProperty.Copy()"
+		m[string(p.name)] = p.localHREF
 	}
 }
 
