@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/lectio/link"
 	"github.com/lectio/markdown"
+	"github.com/lectio/progress"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -32,15 +33,14 @@ func (suite *PublishSuite) TearDownSuite() {
 func (suite *PublishSuite) TestDropmarkToMarkdown() {
 	ctx := context.Background()
 
-	clpr := &CommandLineProgressReporter{maxErrors: 10}
-
+	pbr := progress.NewBarReporter("")
 	bpc := markdown.NewBasePathConfigurator("test_001")
 	linkFactory := link.NewFactory()
 
-	publisher, err := NewMarkdownPublisher(ctx, 25, linkFactory, bpc, clpr, suite)
+	publisher, err := NewMarkdownPublisher(ctx, 25, linkFactory, bpc, pbr, suite)
 	suite.Nil(err, "No error should be reported")
 
-	err = publisher.Publish(ctx, "https://shah.dropmark.com/616548.json", clpr, suite)
+	err = publisher.Publish(ctx, "https://shah.dropmark.com/616548.json", pbr, suite)
 	suite.Nil(err, "No error should be reported")
 }
 

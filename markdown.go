@@ -7,6 +7,7 @@ import (
 	"github.com/lectio/dropmark"
 	"github.com/lectio/link"
 	"github.com/lectio/markdown"
+	"github.com/lectio/progress"
 	"github.com/lectio/properties"
 	"github.com/lectio/resource"
 	"github.com/lectio/score"
@@ -48,11 +49,11 @@ type LinkScorer interface {
 // MarkdownPublisher converts a Bookmarks source to Hugo content
 type MarkdownPublisher struct {
 	AsynchWorkers        uint
-	ExceptionReporter    ExceptionReporter
+	ExceptionCollector   progress.ExceptionCollector
 	LinkFactory          link.Factory
 	ResourceFactory      resource.Factory
 	StopAfterErrorsCount uint
-	BoundedPR            BoundedProgressReporter
+	BoundedPR            progress.BoundedProgressReporter
 	BasePathConfigurator markdown.BasePathConfigurator
 	ContentFS            afero.Fs
 	ImageCacheFS         afero.Fs
@@ -70,7 +71,7 @@ func NewMarkdownPublisher(ctx context.Context, asynchWorkers uint, linkFactory l
 	result.AsynchWorkers = asynchWorkers
 	result.LinkFactory = linkFactory
 	result.BasePathConfigurator = bpc
-	result.BoundedPR = &SummaryProgressReporter{}
+	result.BoundedPR = progress.NewSummaryReporter("")
 	result.StopAfterErrorsCount = 10
 
 	if err := result.initOptions(ctx, options...); err != nil {
@@ -95,10 +96,10 @@ func (p *MarkdownPublisher) initOptions(ctx context.Context, options ...interfac
 			}
 			p.ImageCacheRefURL = instance.ImageReferenceURL(ctx)
 		}
-		if instance, ok := option.(ExceptionReporter); ok {
-			p.ExceptionReporter = instance
+		if instance, ok := option.(progress.ExceptionCollector); ok {
+			p.ExceptionCollector = instance
 		}
-		if instance, ok := option.(BoundedProgressReporter); ok {
+		if instance, ok := option.(progress.BoundedProgressReporter); ok {
 			p.BoundedPR = instance
 		}
 		if instance, ok := option.(markdown.ContentFactory); ok {
@@ -155,8 +156,8 @@ func (p *MarkdownPublisher) initOptions(ctx context.Context, options ...interfac
 }
 
 func (p *MarkdownPublisher) registerError(ctx context.Context, err error) bool {
-	if p.ExceptionReporter != nil && err != nil {
-		return p.ExceptionReporter.ReportError(ctx, err)
+	if p.ExceptionCollector != nil && err != nil {
+		return p.ExceptionCollector.CollectError(ctx, err)
 	}
 
 	// no error rewriting or halting by default
@@ -164,8 +165,8 @@ func (p *MarkdownPublisher) registerError(ctx context.Context, err error) bool {
 }
 
 func (p *MarkdownPublisher) maxErrorsReached(ctx context.Context) bool {
-	if p.ExceptionReporter != nil {
-		return p.ExceptionReporter.MaxErrorsReached(ctx)
+	if p.ExceptionCollector != nil {
+		return p.ExceptionCollector.MaxErrorsCollected(ctx)
 	}
 
 	// no halting by default
@@ -173,8 +174,8 @@ func (p *MarkdownPublisher) maxErrorsReached(ctx context.Context) bool {
 }
 
 func (p *MarkdownPublisher) registerWarning(ctx context.Context, code, message string) bool {
-	if p.ExceptionReporter != nil {
-		return p.ExceptionReporter.ReportWarning(ctx, code, message)
+	if p.ExceptionCollector != nil {
+		return p.ExceptionCollector.CollectWarning(ctx, code, message)
 	}
 
 	// no halting by default
@@ -281,7 +282,7 @@ func (p *MarkdownPublisher) Publish(ctx context.Context, apiEndpoint string, opt
 			wg.Wait()
 		}()
 		for range queue {
-			p.BoundedPR.IncrementReportableActivityProgress(ctx)
+			p.BoundedPR.IncrementReportableActivityProgress(ctx, 1)
 		}
 	} else {
 		for index, item := range c.Items {
@@ -296,7 +297,7 @@ func (p *MarkdownPublisher) Publish(ctx context.Context, apiEndpoint string, opt
 					break
 				}
 			}
-			p.BoundedPR.IncrementReportableActivityProgress(ctx)
+			p.BoundedPR.IncrementReportableActivityProgress(ctx, 1)
 		}
 	}
 	p.BoundedPR.CompleteReportableActivityProgress(ctx, fmt.Sprintf("Published %d Dropmark Links from %q", itemsCount, c.APIEndpoint))
