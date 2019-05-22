@@ -16,22 +16,17 @@ import (
 	"sync"
 )
 
-type WriteContentContextKey string
-type WriteContentContextValue struct {
+type writeContentContextKey string
+type writeContentContextValue struct {
 	publisher *MarkdownPublisher
 }
 
-var InWriteContent = WriteContentContextKey("InWriteContent")
+var inWriteContent = writeContentContextKey("InWriteContent")
 
 // TestConfigurator is passed into options when we're testing the system
 type TestConfigurator interface {
 	StopAfterTestItemsCount(ctx context.Context) uint
 	SimulateLinkScores(ctx context.Context) bool
-}
-
-// ErrorConfigurator is passed into options if we want to stop after N errors
-type ErrorConfigurator interface {
-	StopAfterErrorsCount(ctx context.Context) uint
 }
 
 // ContentLocator is passed into options if we want to override the content path
@@ -52,7 +47,8 @@ type LinkScorer interface {
 
 // MarkdownPublisher converts a Bookmarks source to Hugo content
 type MarkdownPublisher struct {
-	Asynch               bool
+	AsynchWorkers        uint
+	ExceptionReporter    ExceptionReporter
 	LinkFactory          link.Factory
 	ResourceFactory      resource.Factory
 	StopAfterErrorsCount uint
@@ -69,12 +65,12 @@ type MarkdownPublisher struct {
 }
 
 // NewMarkdownPublisher returns a new Pipeline for this strategy
-func NewMarkdownPublisher(ctx context.Context, asynch bool, linkFactory link.Factory, bpc markdown.BasePathConfigurator, options ...interface{}) (*MarkdownPublisher, error) {
+func NewMarkdownPublisher(ctx context.Context, asynchWorkers uint, linkFactory link.Factory, bpc markdown.BasePathConfigurator, options ...interface{}) (*MarkdownPublisher, error) {
 	result := new(MarkdownPublisher)
-	result.Asynch = asynch
+	result.AsynchWorkers = asynchWorkers
 	result.LinkFactory = linkFactory
 	result.BasePathConfigurator = bpc
-	result.BoundedPR = SummaryProgressReporter{}
+	result.BoundedPR = &SummaryProgressReporter{}
 	result.StopAfterErrorsCount = 10
 
 	if err := result.initOptions(ctx, options...); err != nil {
@@ -99,9 +95,8 @@ func (p *MarkdownPublisher) initOptions(ctx context.Context, options ...interfac
 			}
 			p.ImageCacheRefURL = instance.ImageReferenceURL(ctx)
 		}
-		if instance, ok := option.(ErrorConfigurator); ok {
-			p.StopAfterErrorsCount = instance.StopAfterErrorsCount(ctx)
-
+		if instance, ok := option.(ExceptionReporter); ok {
+			p.ExceptionReporter = instance
 		}
 		if instance, ok := option.(BoundedProgressReporter); ok {
 			p.BoundedPR = instance
@@ -159,6 +154,33 @@ func (p *MarkdownPublisher) initOptions(ctx context.Context, options ...interfac
 	return nil
 }
 
+func (p *MarkdownPublisher) registerError(ctx context.Context, err error) bool {
+	if p.ExceptionReporter != nil && err != nil {
+		return p.ExceptionReporter.ReportError(ctx, err)
+	}
+
+	// no error rewriting or halting by default
+	return true
+}
+
+func (p *MarkdownPublisher) maxErrorsReached(ctx context.Context) bool {
+	if p.ExceptionReporter != nil {
+		return p.ExceptionReporter.MaxErrorsReached(ctx)
+	}
+
+	// no halting by default
+	return false
+}
+
+func (p *MarkdownPublisher) registerWarning(ctx context.Context, code, message string) bool {
+	if p.ExceptionReporter != nil {
+		return p.ExceptionReporter.ReportWarning(ctx, code, message)
+	}
+
+	// no halting by default
+	return true
+}
+
 // WriterPrimaryKey satisfies markdown.WriterIndexer
 func (p *MarkdownPublisher) WriterPrimaryKey(ctx context.Context, content markdown.Content, options ...interface{}) string {
 	ic := content.(markdown.IdentifiedContent)
@@ -209,7 +231,7 @@ func (p *MarkdownPublisher) publishItem(ctx context.Context, index uint, item *d
 	}
 
 	// some properties, like downloadedResourceProperty and link scores, need additional context information so let's prepare to pass it in
-	writeCtx := context.WithValue(ctx, InWriteContent, WriteContentContextValue{publisher: p})
+	writeCtx := context.WithValue(ctx, inWriteContent, writeContentContextValue{publisher: p})
 	err = p.Store.WriteContent(writeCtx, p, content, nil)
 	if err != nil {
 		return xerrors.Errorf("Error writing markdown for item %d: %w", item.Index, err)
@@ -231,20 +253,26 @@ func (p *MarkdownPublisher) Publish(ctx context.Context, apiEndpoint string, opt
 	c := dropmarkColl.(*dropmark.Collection)
 	itemsCount := len(c.Items)
 	p.BoundedPR.StartReportableActivity(ctx, fmt.Sprintf("Publishing %d Dropmark Links from %q", itemsCount, c.APIEndpoint), itemsCount)
-	if p.Asynch {
+	if p.AsynchWorkers > 0 {
 		var wg sync.WaitGroup
-		queue := make(chan int)
+		queue := make(chan int, p.AsynchWorkers)
 		for index, item := range c.Items {
 			if p.TestConfigurator != nil {
 				if uint(index) > p.TestConfigurator.StopAfterTestItemsCount(ctx) {
 					break
 				}
 			}
+			if p.maxErrorsReached(ctx) {
+				p.registerError(ctx, xerrors.Errorf("[item %d] maximum errors reached", index))
+				break
+			}
 
 			wg.Add(1)
 			go func(index int, item *dropmark.Item) {
 				defer wg.Done()
-				p.publishItem(ctx, uint(index), item)
+				if piErr := p.publishItem(ctx, uint(index), item); piErr != nil {
+					p.registerError(ctx, xerrors.Errorf("[item %d] error: %w", index, piErr))
+				}
 				queue <- index
 			}(index, item)
 		}
@@ -263,7 +291,11 @@ func (p *MarkdownPublisher) Publish(ctx context.Context, apiEndpoint string, opt
 				}
 			}
 
-			p.publishItem(ctx, uint(index), item)
+			if piErr := p.publishItem(ctx, uint(index), item); piErr != nil {
+				if !p.registerError(ctx, xerrors.Errorf("[item %d] error: %w", index, piErr)) {
+					break
+				}
+			}
 			p.BoundedPR.IncrementReportableActivityProgress(ctx)
 		}
 	}

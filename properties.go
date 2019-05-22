@@ -94,7 +94,7 @@ func NewDownloadedResourceProperty(name properties.PropertyName, featuredImageUR
 
 // Copy copies the key/value pair into the given map
 func (p *downloadedResourceProperty) Copy(ctx context.Context, m map[string]interface{}, options ...interface{}) {
-	if writeCtx, ok := ctx.Value(InWriteContent).(WriteContentContextValue); ok {
+	if writeCtx, ok := ctx.Value(inWriteContent).(writeContentContextValue); ok {
 		// we pass in ourselves into PageFromURL because we implement resource.FileAttachmentCreator, which will
 		// cause PageFromURL to use CreateFile and AutoAssignExtension
 		_, err := writeCtx.publisher.ResourceFactory.PageFromURL(ctx, p.downloadURL.String(), p)
